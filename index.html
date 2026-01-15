@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Torneios FGC</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .campo {
+            margin-bottom: 15px;
+        }
+        button {
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+        #resultados {
+            margin-top: 20px;
+        }
+        .torneio {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Pesquisar Torneios</h2>
+
+<div class="campo">
+    <label>Jogo:</label><br>
+    <select id="campo_jogo">
+        <option value="">Carregando jogos...</option>
+    </select>
+</div>
+
+<div class="campo">
+    <label>Tipo:</label><br>
+    <select id="campo_tipo">
+        <option value="">Selecione</option>
+        <option value="online">Online</option>
+        <option value="offline">Offline</option>
+    </select>
+</div>
+
+<div class="campo">
+    <label>País (Offline):</label><br>
+    <select id="campo_pais">
+        <option value="">Selecione</option>
+        <option value="BR">Brasil</option>
+        <option value="US">Estados Unidos</option>
+    </select>
+</div>
+
+<div class="campo">
+    <label>Região (Online):</label><br>
+    <select id="campo_regiao">
+        <option value="">Selecione</option>
+        <option value="worldwide">Mundo Inteiro</option>
+        <option value="south-america">América do Sul</option>
+    </select>
+</div>
+
+<button onclick="pesquisar()">Pesquisar</button>
+
+<div id="resultados"></div>
+
+<script>
+const GAMES_URL = "https://raw.githubusercontent.com/CaioNP20/torneios-fgc/refs/heads/main/games.json";
+const STARTGG_TOKEN = 'Bearer 40e056dc1b561e98755d02d5b0c7a6df';
+
+let games = [];
+
+/* =======================
+   Carregar jogos
+======================= */
+async function carregarJogos() {
+    const select = document.getElementById("campo_jogo");
+    try {
+        const response = await fetch(GAMES_URL);
+        games = await response.json();
+
+        select.innerHTML = '<option value="">Selecione um jogo</option>';
+        games.forEach(game => {
+            const option = document.createElement("option");
+            option.value = game.value;
+            option.textContent = game.label;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error(error);
+        select.innerHTML = '<option value="">Erro ao carregar jogos</option>';
+    }
+}
+
+/* =======================
+   Pesquisa principal
+======================= */
+async function pesquisar() {
+    const selectedGame = document.getElementById("campo_jogo").value;
+    const selectedType = document.getElementById("campo_tipo").value;
+    const selectedCountry = document.getElementById("campo_pais").value;
+    const selectedRegion = document.getElementById("campo_regiao").value;
+
+    document.getElementById("resultados").innerHTML = "Buscando torneios...";
+
+    let torneios = [];
+
+    if (selectedType === "online") {
+        torneios = await fetchOnlineTournaments(selectedGame, selectedRegion);
+    } else if (selectedType === "offline") {
+        torneios = await fetchOfflineTournaments(selectedGame, selectedCountry);
+    } else {
+        alert("Selecione o tipo de torneio.");
+        return;
+    }
+
+    mostrarResultados(torneios);
+}
+
+/* =======================
+   Online
+======================= */
+async function fetchOnlineTournaments(selectedGame, selectedRegion) {
+    const now = Math.floor(Date.now() / 1000);
+    const twoWeeksFromNow = now + 14 * 24 * 60 * 60;
+
+    const game = games.find(g => g.value === selectedGame);
+    if (!game) {
+        alert("Jogo não encontrado.");
+        return [];
+    }
+    if (!selectedRegion) {
+        alert("Selecione uma região para torneios online.");
+        return [];
+    }
+
+    try {
+        const response = await fetch("https://api.start.gg/gql/alpha", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: STARTGG_TOKEN
+            },
+            body: JSON.stringify({
+                query: `
+                    query ($videogameId: ID!, $after: Timestamp, $before: Timestamp) {
+                        tournaments(query: {
+                            perPage: 40
+                            page: 1
+                            sortBy: "startAt asc"
+                            filter: {
+                                afterDate: $after
+                                beforeDate: $before
+                                videogameIds: [$videogameId]
+                                upcoming: true
+                                hasOnlineEvents: true
+                            }
+                        }) {
+                            nodes {
+                                id
+                                name
+                                url
+                                startAt
+                            }
+                        }
+                    }
+                `,
+                variables: {
+                    videogameId: game.videogameId,
+                    after: now,
+                    before: twoWeeksFromNow
+                }
+            })
+        });
+
+        const json = await response.json();
+        return json.data?.tournaments?.nodes || [];
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao buscar torneios online.");
+        return [];
+    }
+}
+
+/* =======================
+   Offline
+======================= */
+async function fetchOfflineTournaments(selectedGame, selectedCountry) {
+    const game = games.find(g => g.value === selectedGame);
+    if (!game) {
+        alert("Jogo não encontrado.");
+        return [];
+    }
+    if (!selectedCountry) {
+        alert("Selecione um país para torneios offline.");
+        return [];
+    }
+
+    try {
+        const response = await fetch("https://api.start.gg/gql/alpha", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: STARTGG_TOKEN
+            },
+            body: JSON.stringify({
+                query: `
+                    query ($videogameId: ID!, $countryCode: String) {
+                        tournaments(query: {
+                            perPage: 40
+                            page: 1
+                            sortBy: "startAt asc"
+                            filter: {
+                                upcoming: true
+                                videogameIds: [$videogameId]
+                                countryCode: $countryCode
+                            }
+                        }) {
+                            nodes {
+                                id
+                                name
+                                startAt
+                                url
+                                addrState
+                            }
+                        }
+                    }
+                `,
+                variables: {
+                    videogameId: game.videogameId,
+                    countryCode: selectedCountry
+                }
+            })
+        });
+
+        const json = await response.json();
+        return json.data?.tournaments?.nodes || [];
+    } catch (error) {
+        console.error(error);
+        alert("Erro ao buscar torneios offline.");
+        return [];
+    }
+}
+
+/* =======================
+   Mostrar resultados
+======================= */
+function mostrarResultados(torneios) {
+    const container = document.getElementById("resultados");
+    container.innerHTML = "";
+
+    if (!torneios.length) {
+        container.innerHTML = "Nenhum torneio encontrado.";
+        return;
+    }
+
+    torneios.forEach(t => {
+        const div = document.createElement("div");
+        div.className = "torneio";
+        div.innerHTML = `
+            <strong>${t.name}</strong><br>
+            Data: ${new Date(t.startAt * 1000).toLocaleDateString()}<br>
+            <a href="https://start.gg${t.url}" target="_blank">Ver torneio</a>
+        `;
+        container.appendChild(div);
+    });
+}
+
+carregarJogos();
+</script>
+
+</body>
+</html>
